@@ -14,7 +14,7 @@ AT = 0;     % Accelerazione target
 XM_INI = -1;
 YM_INI = -1;
 GAMMA_INI = 0*(30*pi/180); %rad
-VM = 0.5;
+VM = 0.15;
 MAX_ACC = 0.5;
 GUIDE_SEL = 1; %TRUE (GUIDE_SEL=1), PURE (GUIDE_SEL=0) 
 
@@ -29,4 +29,4 @@ LOS_INI = atan2(YT_INI-YM_INI , XT_INI-XM_INI );
 RTOL = 0.01;
 
 % COSTANTE DI TEMPO FCS
-Tautopilot = 0.2;
+Tautopilot = 0.35;

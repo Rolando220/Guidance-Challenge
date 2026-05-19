@@ -9,6 +9,7 @@ close all
 figure; 
 plot(TARGET.signals.values(:,1),TARGET.signals.values(:,2),'r');
 hold on; title('Trajectories'); grid on;
+plot(TARGET.signals.values(1,1), TARGET.signals.values(1,2), 'x');
 xlabel('X (m)'); ylabel('Y (m)');
 plot(MISSILE.signals.values(:,1),MISSILE.signals.values(:,2),'b');
 hold off;
@@ -80,7 +81,7 @@ grid on;
 
 %V missile
 figure;
-VM_res= sqrt( MISSILE.signals.values(:,3).^2 + MISSILE.signals.values(:,4).^2);
+VM_res= sqrt(MISSILE.signals.values(:,3).^2 + MISSILE.signals.values(:,4).^2);
 plot(MISSILE.time,VM_res);
 xlabel('time (sec)'); ylabel('Missile velocity (m/sec)');
 grid on;
