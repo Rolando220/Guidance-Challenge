@@ -22,5 +22,6 @@ if exist([modelName '.slx'], 'file') || exist([modelName '.mdl'], 'file')
 else
     warning('Model %s not found', modelName);
 end
+%prova
 
 results;
