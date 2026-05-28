@@ -14,7 +14,7 @@ You are expected to work on two sections only:
 Do NOT modify any other function. The target behaviour and the rest of the
 software pipeline are managed by the organisers.
 
-Available sensor readings for development (import core_data_access and call the functions below):
+Available sensor readings (import core_data_access and call the functions below):
 
   CDA.get_drone_navdata()    →  [time, pos_x, pos_y, vel_x, vel_y, acc_x, acc_y, yaw]
   CDA.get_target_navdata()   →  [time, pos_x, pos_y, vel_x, vel_y, acc_x, acc_y]
@@ -28,10 +28,6 @@ Available sensor readings for development (import core_data_access and call the 
     sigma_dot – LOS angle rate [rad/s]
     yaw       – drone heading angle [rad]
 
-Available sensor readings as feedback for the Challenge:    
-
-  CDA.get_seeker_data()      →  [time, r, sigma]
-
 Coordinate frame: Vicon Navigation Frame (planar, z = 0 for both drone and target).
 """
 
@@ -39,40 +35,33 @@ import math
 import core_data_access as CDA
 from logging_script import *
 import numpy as np
-import scipy.io as sio
-import atexit
+from persistent_var import PersistentVariable 
 
 
 # ---------------------------------------------------------------------------
-# Logger setup — do not modify unless 10 values are not enough 
+# Logger setup — do not modify
 # ---------------------------------------------------------------------------
 
 # Number of custom variables you want to log (max 10)
-private_guidance_data_length = 29
+private_guidance_data_length = 10
 
-
-# Lista globale per immagazzinare la storia dei dati
-log_history = []
-
-def export_to_matlab():
-    """Funzione che verrà eseguita automaticamente alla fine della simulazione"""
-    if log_history:
-        # np.hstack unisce tutti i vettori colonna (29x1).
-        # .T traspone la matrice in modo da avere: Righe = Timestep, Colonne = Variabili (Nx29)
-        data_matrix = np.hstack(log_history).T 
-        
-        # Salva un vero e proprio file MATLAB .mat
-        sio.savemat('TeamPonio_log.mat', {'guidance_data': data_matrix})
-        print("Log esportato con successo in TeamPonio_log.mat!")
-
-# Il framework chiamerà questa funzione automaticamente quando lo script termina
-atexit.register(export_to_matlab)
-
-
+ff_time_old = PersistentVariable(0.0)
+sigma_old = PersistentVariable(0.0)
+ff_r = PersistentVariable(0.0)
+ff_r_dot = PersistentVariable(0.0)
+ff_sigma_dot = PersistentVariable(0.0)
+ff_sigma = PersistentVariable(0.0)
+ff_r_dot_raw = PersistentVariable(0.0)
+ff_sigma_dot_raw = PersistentVariable(0.0)
+ff_tan_acc_est = PersistentVariable(0.0)
+ff_tan_acc_old = PersistentVariable(0.0)
+ff_initialized = PersistentVariable(False)
+ 
 
 # Storage array and async logger for your private data
 private_guidance_data = np.zeros((private_guidance_data_length, 1))
 private_logger = AsyncMatlabPrint(flag=9, num_data=private_guidance_data_length)
+
 
 
 # ---------------------------------------------------------------------------
@@ -119,12 +108,12 @@ def which_mission():
 
     # --- Drone initial conditions -------------------------------------------
 
-    init_pos = [-1.0, -1.0]         # Starting position [x, y]  (metres)
+    init_pos = [0.0, -1.0]         # Starting position [x, y]  (metres)
 
     heading_error = 0               # Offset from the nominal heading angle [degrees]
-   
+                                    # Increase this to introduce an initial pointing error
 
-    v_angle = ((90 - heading_error) * math.pi / 180.0)   # Heading angle [rad] - EXAMPLE
+    v_angle = ((90 - heading_error) * math.pi / 180.0)   # Heading angle [rad]
     v_norm  = 0.5                                          # Speed [m/s] — must be ≤ 0.5
 
     init_vel = np.array([v_norm * math.cos(v_angle),
@@ -134,7 +123,7 @@ def which_mission():
 
     in_p = np.array([1.0, 0.0, 0])                        # Position [x, y, 0]  (metres)
 
-    v_angle_t = (225 * math.pi / 180.0)                     # Target heading [rad]
+    v_angle_t = (180 * math.pi / 180.0)                     # Target heading [rad]
     v_norm_t  = 0.25                                        # Target speed [m/s]
 
     in_v = np.array([v_norm_t * math.cos(v_angle_t),
@@ -145,7 +134,7 @@ def which_mission():
     # 1: switching acceleration  →  see acceleration_switcher()
     # 2: intelligent pursuit     →  see target_guidance_law()
 
-    target_mode = 1                 # ← CHANGE THIS to select the target behaviour
+    target_mode = 2                 # ← CHANGE THIS to select the target behaviour
 
     return init_pos, init_vel, in_p, in_v, target_mode
 
@@ -155,8 +144,9 @@ def which_mission():
 # ---------------------------------------------------------------------------
 
 def my_guidance(data: list):
+
     """
-    Compute the lateral acceleration command for the pursuer drone.
+    Compute the lateral acceleration command for the seeker drone.
 
     This function is called at every simulation timestep by the framework.
     Your task is to implement a guidance law that drives the drone to intercept
@@ -167,7 +157,7 @@ def my_guidance(data: list):
     data : list
         Fading-filter estimates  [r, sigma, r_dot, sigma_dot]
         These are the same quantities available through get_seeker_ext_data(),
-        but pre-filtered. You may use either source .
+        but pre-filtered. You may use either source.
 
     Sensor readings available
     -------------------------
@@ -204,26 +194,22 @@ def my_guidance(data: list):
     float
         Lateral acceleration command perpendicular to the drone velocity [m/s²]
     """
+    
+    # ------------------DA QUI INIZIA IL CODICE STANDARD DEL PROF----------------------
+    # Declare globals to enable logging
+    # global private_logger, private_guidance_data
 
-    # Declare globals to enable logging and persistent filter states
-    global private_logger, private_guidance_data, log_history
-    global ff_initialized, ff_time_old
-    global ff_r, ff_r_dot, ff_sigma, ff_sigma_dot
-    global ff_r_dot_raw, ff_sigma_dot_raw
-    global ff_tan_acc_est, ff_tan_acc_old
-
-    # ------------------------------------------------------------------
-    # Sensor data available in the challenge
-    # ------------------------------------------------------------------
+    # Read sensor data
     ddata = CDA.get_drone_navdata()
     sdata = CDA.get_seeker_data()
+    edata = CDA.get_seeker_ext_data()
 
     time_now   = float(sdata[0])
     r_meas     = float(sdata[1])
     sigma_meas = wrap(float(sdata[2]))
     yaw        = wrap(float(ddata[7]))
 
-    # ------------------------------------------------------------------
+     # ------------------------------------------------------------------
     # 2nd-order fading filter on r and sigma
     # States:
     #   r, r_dot
@@ -232,108 +218,143 @@ def my_guidance(data: list):
     # Important:
     #   sigma residual is wrapped to avoid jumps near +/-pi.
     # ------------------------------------------------------------------
-    beta_memory = 0.55
-
-    G = 1.0 - beta_memory**2
-    H = (1.0 - beta_memory)**2
-
     try:
-        ff_initialized
+        ff_initialized.get()
     except NameError:
-        ff_initialized = False
+        ff_initialized.set(False)
 
-    if not ff_initialized:
-        ff_r = max(r_meas, 1e-3)
-        ff_r_dot = 0.0
-        ff_sigma = sigma_meas
-        ff_sigma_dot = 0.0
-        ff_r_dot_raw = 0.0
-        ff_sigma_dot_raw = 0.0
-        ff_tan_acc_est = 0.0
-        ff_tan_acc_old = 0.0
-        ff_time_old = time_now
-        ff_initialized = True
+    if not ff_initialized.get():
+        ff_r.set(max(r_meas, 1e-3))
+        ff_sigma.set(sigma_meas)
+        ff_initialized.set(True)
 
-    dt = time_now - ff_time_old
-
+    
+    # STIMA DI SIGMA_DOT CON DERIVATA SEMPLICE
+    dt = time_now - ff_time_old.get()
+    # sigma_dot = (sdata[2] - sigma_old.get())/dt
+    # sigma_old.set(sdata[2])
+    # print(f"{dt:.10f}")
+   
     if dt > 1e-5:
+        # ACHTUNG!!! STIMA DI SIGMA_DOT E R_DOT CON FADING FILTER (scommentare con cautela perché da testare)
+        beta_memory = 0.55
+        G = 1.0 - beta_memory**2
+        H = (1.0 - beta_memory)**2
+   
         # --- r filter
-        r_pred = ff_r + dt * ff_r_dot
-        r_dot_pred = ff_r_dot
+        r_pred = ff_r.get() + dt * ff_r_dot.get()
+        r_dot_pred = ff_r_dot.get()
         e_r = r_meas - r_pred
-
-        ff_r = max(r_pred + G * e_r, 1e-3)
-        ff_r_dot = r_dot_pred + H * e_r / dt
+        ff_r.set(max(r_pred + G * e_r, 1e-3))
+        ff_r_dot.set(r_dot_pred + H * e_r / dt)
 
         # --- sigma filter
-        sigma_pred = wrap(ff_sigma + dt * ff_sigma_dot)
-        sigma_dot_pred = ff_sigma_dot
+        sigma_pred = wrap(ff_sigma.get() + dt * ff_sigma_dot.get())
+        sigma_dot_pred = ff_sigma_dot.get()
         e_sigma = wrap(sigma_meas - sigma_pred)
 
-        ff_sigma = wrap(sigma_pred + G * e_sigma)
-        ff_sigma_dot = sigma_dot_pred + H * e_sigma / dt
+        ff_sigma.set(wrap(sigma_pred + G * e_sigma))
+        ff_sigma_dot.set(sigma_dot_pred + H * e_sigma / dt)
 
-        # Optional raw derivatives for logging/debug
-        ff_r_dot_raw = (r_meas - ff_r) / dt
-        ff_sigma_dot_raw = e_sigma / dt
-
-        ff_time_old = time_now
-
-    r = ff_r
-    r_dot = ff_r_dot
-    sigma = ff_sigma
-    sigma_dot = ff_sigma_dot
-
+        ff_time_old.set(time_now)
+    
+    r = ff_r.get()
+    r_dot = ff_r_dot.get()
+    sigma = ff_sigma.get()
+    sigma_dot = ff_sigma_dot.get()
+    # print(f"{sigma_dot:.10f}")
     # Closing speed, positive during approach.
     Vc = max(-r_dot, 0.0)
 
     # ------------------------------------------------------------------
-    # Proportional Navigation
+    # EXAMPLE GUIDANCE LAW — Pure Pursuit
     # ------------------------------------------------------------------
-    N = 4.2
+    # The drone aligns its heading with the Line-Of-Sight (LOS) angle sigma.
+    #
+    # sigma_relative = yaw - sigma
+    #   > 0  →  target is to the RIGHT  →  turn right  (negative acc)
+    #   < 0  →  target is to the LEFT   →  turn left   (positive acc)
+    #
+    # Feel free to replace this block entirely with your own law.
+    # ------------------------------------------------------------------
 
-    # Use a small pursuit fallback when not closing, otherwise PNG alone may
-    # command almost zero acceleration.
-    sigma_err = wrap(yaw - sigma)
-    pursuit_fallback = -0.35 * sigma_err
+    sigma_r = wrap(ddata[7] - sdata[2])   # Heading error w.r.t. LOS [rad]
+    # kp = 1.5                              # Proportional gain — tune this value
 
-    acc_png = N * Vc * sigma_dot 
+    # acc = -kp * sigma_r
 
-    if Vc < 0.03:
-        acc = pursuit_fallback
-    else:
-        acc = acc_png + pursuit_fallback
+    # Acceleration saturation — adjust limits if needed  ← CHANGE HERE
+    # acc_sat = 0.5
+    # if acc >  acc_sat:
+    #    acc =  acc_sat
+    # if acc < -acc_sat:
+    #    acc = -acc_sat
 
-    acc_sat = 0.70
-    if acc > acc_sat:
-        acc = acc_sat
-    elif acc < -acc_sat:
+
+    
+    
+    # ACHTUNG QUESTO LOGGING HA DEI PROBLEMI NEGLI INDICI DEGLI ARRAY MA NON E' SBAGLIATO IN ASSOLUTO
+    # private_guidance_data[5] = time_now
+    # private_guidance_data[6] = r_meas
+    # private_guidance_data[7] = r
+    # private_guidance_data[8] = r_dot
+    # private_guidance_data[9] = sigma_meas
+    # private_guidance_data[10] = sigma
+    # private_guidance_data[12] = Vc
+    # private_guidance_data[13] = acc
+    # private_guidance_data[14] = CDA.get_seeker_ext_data()[4]   # Sigma_dot ext.
+    # private_guidance_data[15] = CDA.get_seeker_ext_data()[3]  # r_dot ext.
+    # private_guidance_data[16:23] = CDA.get_target_navdata() # target data 
+    # private_guidance_data[23:31] = CDA.get_drone_navdata()
+    # private_guidance_data[31:34] = CDA.get_seeker_data()   # seeker data
+   
+
+
+
+    # ------------------------------------------------------------------
+    # ALTERNATIVE EXAMPLE — Proportional Navigation Guidance (PNG)
+    # ------------------------------------------------------------------
+    # Uncomment the block below (and comment out the Pursuit block above)
+    # to try a PNG law instead.
+    #
+    # n         : navigation constant (typically 3–5)
+    # sigma_dot : LOS rate  [rad/s]
+    # r_dot     : range rate [m/s]  (negative when closing)
+    #
+    # acc = n * (-r_dot) * sigma_dot
+    # ------------------------------------------------------------------
+
+    
+    n = 4.2
+    # sigma_dot = edata[4]
+    # r_dot     = edata[3]
+    acc = n * Vc * sigma_dot 
+    acc = acc - 0.25 * sigma_r
+
+    acc_sat = 0.5
+    if acc >  acc_sat:
+        acc =  acc_sat
+    if acc < -acc_sat:
         acc = -acc_sat
 
-    private_guidance_data[0] = time_now
-    private_guidance_data[1] = r_meas
-    private_guidance_data[2] = r
-    private_guidance_data[3] = r_dot
-    private_guidance_data[4] = sigma_meas
-    private_guidance_data[5] = sigma
-    private_guidance_data[6] = sigma_dot
-    private_guidance_data[7] = Vc
-    private_guidance_data[8] = acc
-    private_guidance_data[9] = CDA.get_seeker_ext_data()[4]   # Sigma_dot ext.
-    private_guidance_data[10] = CDA.get_seeker_ext_data()[3]  # r_dot ext.
-    private_guidance_data[11:18] = CDA.get_target_navdata() # target data 
-    private_guidance_data[18:26] = CDA.get_drone_navdata()
-    private_guidance_data[26:29] = CDA.get_seeker_data()   # seeker data
-    
 
-    # ---------------- NUOVA RIGA DA AGGIUNGERE ----------------
-    # È FONDAMENTALE usare .copy() altrimenti salverai N volte sempre lo stesso valore!
-    log_history.append(private_guidance_data.copy())
-    # ----------------------------------------------------------
-
+    #store private_guidance_data
+    # EXAMPLE
+    private_guidance_data[0] = ddata[0] #time
+    private_guidance_data[1] = ddata[7] #yaw
+    private_guidance_data[2] = sdata[2] #sigma
+    private_guidance_data[3] = sigma_r #sigma_r
+    private_guidance_data[4] = acc #acc
+    private_guidance_data[5] = sigma_dot
+    private_guidance_data[6] = r_dot
     private_logger.append(private_guidance_data)
 
+    
+
     return acc
+    
+
+    
 
 
 # ---------------------------------------------------------------------------
@@ -378,8 +399,6 @@ def acceleration_switcher(t_sim):
 
     The target applies different constant accelerations across three time windows.
 
-    Modify this function to test different combinations of maneuvers.
-
     Parameters
     ----------
     t_sim : float   Current simulation time [s]
@@ -390,15 +409,15 @@ def acceleration_switcher(t_sim):
         Target lateral acceleration [m/s²]
     """
 
-    t1_switch = 50    # End of first phase [s]
-    t2_switch = 100   # End of second phase [s]
+    t1_switch = 2    # End of first phase [s]
+    t2_switch = 5.5   # End of second phase [s]
 
     if 0 < t_sim <= t1_switch:
-        acc = -0.075          # Phase 1 acceleration
+        acc = 0.075          # Phase 1 acceleration
     elif t1_switch < t_sim <= t2_switch:
-        acc =  0.2            # Phase 2 acceleration
+        acc =  -0.1            # Phase 2 acceleration
     else:
-        acc = -0.25           # Phase 3 acceleration
+        acc = -0.2           # Phase 3 acceleration
 
     return acc
 
