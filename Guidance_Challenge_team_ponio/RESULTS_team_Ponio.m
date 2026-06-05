@@ -24,7 +24,46 @@ name = "logging_script__20260527_161606.txt" % Target accelerante con 2 switch (
 name = "logging_script__20260527_161908.txt" % Target intelligente loro (Out of box)
 name = "logging_script__20260527_162334.txt" % Target intelligente loro (colpito)
 name = "logging_script__20260527_162638.txt"
-
+name = "logging_script__20260529_141321.txt" % test 29/05: target intelligente ZEM
+name = "logging_script__20260529_150131.txt" 
+name = "logging_script__20260529_150841.txt" % target intelligente ZEM, heading 110 target, guida fallisce
+name = "logging_script__20260529_152535.txt" % come prima ma dopo la calibrazione
+name = "logging_script__20260529_153153.txt"
+name = "logging_script__20260529_153558.txt"
+name = "logging_script__20260529_154113.txt" % log figo FN5S
+name = "logging_script__20260529_154507.txt" % a scuola prendevo spesso 4.5
+name = "logging_script__20260529_155317.txt" % biscotto pesa 0.35
+name = "logging_script__20260529_155946.txt" % retry
+name = "logging_script__20260529_161413.txt" % guida adattiva
+name = "logging_script__20260529_161756.txt" % cambio parametri
+name = "logging_script__20260529_162256.txt" % modifica guida adattiva, beccato
+name = "logging_script__20260529_162703.txt" % cambio parametri e non ha funzionato
+name = "logging_script__20260529_163128.txt" % velocità reimpostate e parametri cambiati, beccato
+name = "logging_script__20260529_163842.txt" % guida adattiva 0.5 vs 0.25 target loro missato
+name = "logging_script__20260529_164128.txt" % guida adattiva 0.4 vs 0.25 target loro missato
+name = "logging_script__20260529_164518.txt" % guida base 0.4 vs 0.25 target loro preso dopo una vita (0.35 volte)
+name = "logging_script__20260529_164923.txt" % aumentatà velocità poi come prima meno di una vita (0.25 volte)
+name = "logging_script__20260604_104308.txt" % Target acclerante classico
+name = "logging_script__20260604_104616.txt" % Sempre target accelerante
+name = "logging_script__20260604_105643.txt" % Target accelerante super classico
+name = "logging_script__20260604_110238.txt" % Target evasivo loro (0°)
+name = "logging_script__20260604_110636.txt" % Target evasivo loro (45°)
+name = "logging_script__20260604_111019.txt" % Target evasivo loro (45°) un po piu sodo
+name = "logging_script__20260604_111323.txt" % Target evasivo loro (45°) N aumentato
+name = "logging_script__20260604_111622.txt" % Target evasivo (45°) N regolato
+% name = "logging_script__20260604_125929.txt"
+name = "logging_script__20260604_130815.txt" % apng target accelerante classico miss dist 0.04 pen 32.42
+name = "logging_script__20260604_131219.txt" % pursuit con bias target accelerante classico miss dist 0.014 pen 23.75
+name = "logging_script__20260604_131501.txt" % png con bias target accelerante classico miss dist 0.002 pen 14.6060
+name = "logging_script__20260604_132156.txt" % hybrid drive target accelerante classico miss dist 0.0250 pen 26.2520
+name = "logging_script__20260604_133107.txt" % hybrid drive target accelerante classico mis distance 0.008 pen 18.6230
+name = "logging_script__20260604_135154.txt" % hybrid drive targer intelligente miss distance 0.0150 pen 34.03090
+name = "logging_script__20260604_135459.txt" % hybrid drive target intelligente triangolo miss distance 0.038 total pen 39.38
+name = "logging_script__20260604_135857.txt" % png target intelligente triangolo miss distance 0.024 total pen 22.3790
+name = "logging_script__20260604_140134.txt" % pursuit target intelligente triangolo miss distance 0.041 total pen 45.8910
+name = "logging_script__20260604_140733.txt" % hybrid_drive target intelligente triangolo miss distance 0.0270 total pen 34.3590
+name = "logging_script__20260604_141112.txt" % hybrid drive target intelligente triangolo miss distance 0.0490 total pen 36.0220
+name = "logging_script__20260604_142049.txt" % hybrid drive target intelligente triangolo miss distance 0.0040 total pen 29.9530
 %%        
 %%  *****************************************************        
 %%  *                                                   *
