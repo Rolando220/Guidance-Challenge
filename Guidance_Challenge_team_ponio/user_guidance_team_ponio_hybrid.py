@@ -56,6 +56,15 @@ ff_sigma_dot_raw = PersistentVariable(0.0)
 ff_tan_acc_est = PersistentVariable(0.0)
 ff_tan_acc_old = PersistentVariable(0.0)
 ff_initialized = PersistentVariable(False)
+ff_aT_perp_est = PersistentVariable(0.0)
+ff_sigma_dot_old = PersistentVariable(0.0)
+hybrid_mode_memory = PersistentVariable(2.0)
+
+
+# Persistent variables for target PNG-killer guidance law
+target_last_switch = PersistentVariable(-1e9)
+target_chosen_sign = PersistentVariable(1.0)
+target_initialized = PersistentVariable(False)
  
 
 # Storage array and async logger for your private data
@@ -108,20 +117,20 @@ def which_mission():
 
     # --- Drone initial conditions -------------------------------------------
 
-    init_pos = [0.0, -1.0]         # Starting position [x, y]  (metres)
+    init_pos = [-1.0, -1.0]         # Starting position [x, y]  (metres)
 
     heading_error = 0               # Offset from the nominal heading angle [degrees]
                                     # Increase this to introduce an initial pointing error
 
-    v_angle = ((90 - heading_error) * math.pi / 180.0)   # Heading angle [rad]
-    v_norm  = 0.5                                          # Speed [m/s] — must be ≤ 0.5
+    v_angle = ((45 - heading_error) * math.pi / 180.0)   # Heading angle [rad]
+    v_norm  = 0.5                                         # Speed [m/s] — must be ≤ 0.5
 
     init_vel = np.array([v_norm * math.cos(v_angle),
                          v_norm * math.sin(v_angle)])
 
     # --- Target initial conditions -------------------------------------------
 
-    in_p = np.array([1.0, 0.0, 0])                        # Position [x, y, 0]  (metres)
+    in_p = np.array([1.0, 1.0, 0])                        # Position [x, y, 0]  (metres)
 
     v_angle_t = (180 * math.pi / 180.0)                     # Target heading [rad]
     v_norm_t  = 0.25                                        # Target speed [m/s]
@@ -256,7 +265,14 @@ def my_guidance(data: list):
         ff_sigma.set(wrap(sigma_pred + G * e_sigma))
         ff_sigma_dot.set(sigma_dot_pred + H * e_sigma / dt)
 
+        sigma_ddot_raw = (ff_sigma_dot.get() - ff_sigma_dot_old.get())/dt
+        a_rel_perp_raw = ff_r.get()*sigma_ddot_raw + 2.0 * ff_r_dot.get() * ff_sigma_dot.get()
+        tau_a = 0.35
+        alpha_a = tau_a/(tau_a + dt)
+        ff_aT_perp_est.set((alpha_a * ff_aT_perp_est.get() + (1.0 - alpha_a)*a_rel_perp_raw))
+
         ff_time_old.set(time_now)
+        ff_sigma_dot_old.set(ff_sigma_dot.get())
     
     r = ff_r.get()
     r_dot = ff_r_dot.get()
@@ -279,36 +295,80 @@ def my_guidance(data: list):
     # ------------------------------------------------------------------
 
     sigma_r = wrap(ddata[7] - sdata[2])   # Heading error w.r.t. LOS [rad]
-    # kp = 1.5                              # Proportional gain — tune this value
 
-    # acc = -kp * sigma_r
+    # pure pursuit LOS alignment
+    kp_pursuit = 1.8                              # Proportional gain — tune this value
+    kd_pursuit = 0.1
+    sigma_err = wrap(ddata[7] - sigma)
+    acc_pursuit = -kp_pursuit * sigma_err - kd_pursuit * sigma_dot
 
-    # Acceleration saturation — adjust limits if needed  ← CHANGE HERE
-    # acc_sat = 0.5
-    # if acc >  acc_sat:
-    #    acc =  acc_sat
-    # if acc < -acc_sat:
-    #    acc = -acc_sat
 
+    # PNG
+    N_png = 4.7
+    acc_png = N_png * Vc * sigma_dot - 0.25 * sigma_r    #"PNG + Bias"
+
+    # APNG
+    N_apng = 4.7
+    aT_perp = ff_aT_perp_est.get()    
 
     
-    
-    # ACHTUNG QUESTO LOGGING HA DEI PROBLEMI NEGLI INDICI DEGLI ARRAY MA NON E' SBAGLIATO IN ASSOLUTO
-    # private_guidance_data[5] = time_now
-    # private_guidance_data[6] = r_meas
-    # private_guidance_data[7] = r
-    # private_guidance_data[8] = r_dot
-    # private_guidance_data[9] = sigma_meas
-    # private_guidance_data[10] = sigma
-    # private_guidance_data[12] = Vc
-    # private_guidance_data[13] = acc
-    # private_guidance_data[14] = CDA.get_seeker_ext_data()[4]   # Sigma_dot ext.
-    # private_guidance_data[15] = CDA.get_seeker_ext_data()[3]  # r_dot ext.
-    # private_guidance_data[16:23] = CDA.get_target_navdata() # target data 
-    # private_guidance_data[23:31] = CDA.get_drone_navdata()
-    # private_guidance_data[31:34] = CDA.get_seeker_data()   # seeker data
-   
+    acc_apng = N_apng * Vc * sigma_dot + 0.5 * N_apng * aT_perp - 0.25 * sigma_r
 
+    # adaptive guidance
+    # mode_IDs
+    # 1 = pursuit 
+    # 2 = PNG
+    # 3 = APNG
+    # 4 = blended PNG_APNG
+
+    VC_MIN = 0.01
+    R_TERMINAL = 0.2
+    R_FAR = 0.5
+    APNG_ON = 0.15
+    APNG_OFF = 0.05
+
+    maneuver_level = abs(aT_perp)
+    if hybrid_mode_memory.get() == 3.0:
+        target_maneuvering = maneuver_level > APNG_OFF
+    else: 
+        target_maneuvering = maneuver_level > APNG_ON
+
+    if Vc < VC_MIN:
+        acc = acc_pursuit
+        mode_id = 1.0
+        print("using pure pursuit")
+    elif r < R_TERMINAL:
+        if target_maneuvering:
+            acc = 0.6 * acc_pursuit + 0.4 * acc_apng
+            mode_id = 4.0
+            print("using pursuit + apng")
+        else: 
+            acc = 0.7 * acc_pursuit + 0.3 * acc_png
+            mode_id = 4.0
+            print("using pursuit + png")
+
+    elif target_maneuvering:
+       acc = acc_apng
+       mode_id = 3.0
+       print("using pure apng")
+
+    elif r > R_FAR: 
+       acc = 0.25 * acc_pursuit + 0.75 * acc_png
+       mode_id = 4.0
+       print("using pursuit + png")
+    else: 
+       acc = acc_png
+       mode_id = 2.0
+       print("using png")
+
+
+    hybrid_mode_memory.set(mode_id if mode_id in [1.0, 2.0, 3.0] else hybrid_mode_memory)
+    
+    acc_sat = 0.5
+    if acc >  acc_sat:
+        acc =  acc_sat
+    if acc < -acc_sat:
+        acc = -acc_sat
 
 
     # ------------------------------------------------------------------
@@ -325,18 +385,25 @@ def my_guidance(data: list):
     # ------------------------------------------------------------------
 
     
-    n = 4.2
+  
     # sigma_dot = edata[4]
     # r_dot     = edata[3]
-    acc = n * Vc * sigma_dot 
-    acc = acc - 0.25 * sigma_r
 
-    acc_sat = 0.5
-    if acc >  acc_sat:
-        acc =  acc_sat
-    if acc < -acc_sat:
-        acc = -acc_sat
+    # alpha_max = 0.85
+    # alpha_min = 0.15
 
+    # if r_meas > 0.7:
+    #     alpha = alpha_max
+    # elif r_meas < 0.1:
+    #     alpha = alpha_min
+    # else:
+    #     alpha = alpha_min + (alpha_max - alpha_min)*((r_meas - 0.1)/(0.7 - 0.1))
+
+    # acc_png = n * Vc * sigma_dot
+    # acc_pursuit = - 1.0 * sigma_r
+    # acc = alpha * acc_png + (1 - alpha) * acc_pursuit
+
+  
 
     #store private_guidance_data
     # EXAMPLE
@@ -348,8 +415,6 @@ def my_guidance(data: list):
     private_guidance_data[5] = sigma_dot
     private_guidance_data[6] = r_dot
     private_logger.append(private_guidance_data)
-
-    
 
     return acc
     
@@ -396,6 +461,16 @@ def target_guidance_function(mode, t_sim, yaw):
         # Mode 3: target law based on miss distance (ZEM) — see target_miss_distance_escape()
         acc = target_miss_distance_escape(t_sim, yaw)
         return acc
+    
+    elif mode == 4:
+        # Mode 3: PNG-killer intelligent target — see target_png_killer_law()
+        acc = target_png_killer_law(t_sim)
+        return acc
+    
+    # elif mode == 5:
+    #     # Mode 3: PNG-killer intelligent target — see target_png_killer_law()
+    #     acc = target_miss_distance_escape2(t_sim)
+    #     return acc
 
 
 def acceleration_switcher(t_sim):
@@ -414,15 +489,15 @@ def acceleration_switcher(t_sim):
         Target lateral acceleration [m/s²]
     """
 
-    t1_switch = 2    # End of first phase [s]
-    t2_switch = 5.5   # End of second phase [s]
+    t1_switch = 1.0    # End of first phase [s]
+    t2_switch = 50   # End of second phase [s]
 
     if 0 < t_sim <= t1_switch:
-        acc = 0.075          # Phase 1 acceleration
+        acc = 0.0          # Phase 1 acceleration
     elif t1_switch < t_sim <= t2_switch:
         acc =  -0.1            # Phase 2 acceleration
     else:
-        acc = -0.2           # Phase 3 acceleration
+        acc = 0.0           # Phase 3 acceleration
 
     return acc
 
@@ -517,7 +592,6 @@ def target_miss_distance_escape(t_sim, yaw):
     
     # 1. Miss distance (ZEM)
     r         = float(edata[1])
-    sigma     = float(edata[2])
     r_dot     = float(edata[3])
     sigma_dot = float(edata[4])
     
@@ -525,6 +599,7 @@ def target_miss_distance_escape(t_sim, yaw):
     miss_distance = (r**2 * sigma_dot) / Vc
 
     yaw   = wrap(yaw)
+    sigma = wrap(math.pi + sdata[2])
     drone_relative_angle = wrap(sigma - yaw) 
     # Se > 0: il drone è a SINISTRA del target
     # Se < 0: il drone è a DESTRA del target
@@ -538,7 +613,7 @@ def target_miss_distance_escape(t_sim, yaw):
         else:
             acc = -0.5 # Drone a dx -> Vira tutto a dx
         
-    elif r < 0.25:
+    elif r < 0.5:
         # Fase 2 (Last-ditch): Il drone è letteralmente addosso.
         # INVERTI brutalmente la virata per fare uno scarto all'ultimo istante.
         if drone_relative_angle > 0:
@@ -574,6 +649,244 @@ def target_miss_distance_escape(t_sim, yaw):
     if (math.fabs(t_pose_x) > x_max * threshold or
             math.fabs(t_pose_y) > y_max * threshold):
         acc = 0.35
+
+    return acc
+
+def target_png_killer_law(t_sim):
+    """
+    Intelligent target guidance law translated from the MATLAB function
+    target_intelligente_png_killer.
+
+    This target tries to make PNG difficult by:
+      - activating only when the seeker is close / dangerous;
+      - estimating closing velocity and time-to-go;
+      - comparing two candidate target accelerations: +ACC_MAX and -ACC_MAX;
+      - choosing the maneuver that maximizes a score based on future range
+        and future LOS-rate magnitude;
+      - adding a dwell-time logic to avoid changing maneuver too fast.
+
+    Parameters
+    ----------
+    t_sim : float
+        Current simulation time [s]
+
+    Returns
+    -------
+    float
+        Target lateral acceleration command [m/s²]
+    """
+
+    global target_last_switch, target_chosen_sign, target_initialized
+
+    # ============================================================
+    # Main parameters
+    # ============================================================
+
+    ACC_MAX = 0.2       # [m/s^2] target maximum lateral acceleration
+
+    R_ON = 0.65         # [m] start intelligent evasion
+    R_PANIC = 0.30      # [m] aggressive evasion
+    TGO_ON = 2.0        # [s] evade if estimated intercept is within 2 s
+
+    DWELL_TIME = 0.45   # [s] minimum time between maneuver sign changes
+
+    TAU_MIN = 0.25      # [s] minimum prediction horizon
+    TAU_MAX = 0.80      # [s] maximum prediction horizon
+
+    K_SIGMA = 0.04      # weight to also disturb sigma_dot
+
+    EPS_R = 1e-6
+    EPS_VC = 1e-6
+    EPS_VT = 1e-6
+
+    # ============================================================
+    # Persistent initialization
+    # ============================================================
+
+    if not target_initialized.get():
+        target_last_switch.set(-1e9)
+        target_chosen_sign.set(1.0)
+        target_initialized.set(True)
+
+    # Default: no maneuver
+    acc = 0.0
+
+    # ============================================================
+    # Read navigation data
+    # ============================================================
+
+    ddata = CDA.get_drone_navdata()
+    tdata = CDA.get_target_navdata()
+
+    # Relative position: R = P_T - P_M
+    R_x = float(tdata[1] - ddata[1])
+    R_y = float(tdata[2] - ddata[2])
+
+    # Absolute velocities
+    VM_x = float(ddata[3])
+    VM_y = float(ddata[4])
+
+    VT_x = float(tdata[3])
+    VT_y = float(tdata[4])
+
+    # ============================================================
+    # Relative geometry
+    # ============================================================
+
+    R = math.sqrt(R_x**2 + R_y**2)
+
+    if R < EPS_R:
+        acc = ACC_MAX
+        return acc
+
+    # Relative velocity coherent with R = P_T - P_M
+    V_rel_x = VT_x - VM_x
+    V_rel_y = VT_y - VM_y
+
+    # Range derivative
+    R_dot = (R_x * V_rel_x + R_y * V_rel_y) / R
+
+    # Closing velocity: positive if the missile/drone is approaching
+    Vc = -R_dot
+
+    if Vc > EPS_VC:
+        t_go = R / Vc
+    else:
+        t_go = 1e6
+
+    # Instantaneous LOS rate from relative geometry
+    sigma_dot = (R_x * V_rel_y - R_y * V_rel_x) / (R**2)
+
+    # ============================================================
+    # Threat evaluation
+    # ============================================================
+
+    threat = False
+
+    if Vc > EPS_VC:
+        if R < R_ON:
+            threat = True
+
+        if t_go < TGO_ON:
+            threat = True
+
+    if not threat:
+        acc = 0.0
+        return acc
+
+    # ============================================================
+    # Compute beta from target velocity components
+    # ============================================================
+
+    VT_norm = math.sqrt(VT_x**2 + VT_y**2)
+
+    if VT_norm < EPS_VT:
+        beta = 0.0
+    else:
+        beta = math.atan2(VT_y, VT_x)
+
+    # Left normal to target velocity.
+    # If acc > 0:
+    # a_T = acc * [-sin(beta); cos(beta)]
+    nTx = -math.sin(beta)
+    nTy = math.cos(beta)
+
+    # Prediction horizon
+    tau = 0.35 * t_go
+
+    if tau < TAU_MIN:
+        tau = TAU_MIN
+    elif tau > TAU_MAX:
+        tau = TAU_MAX
+
+    # ============================================================
+    # Candidate 1: acc = +ACC_MAX
+    # ============================================================
+
+    acc1 = ACC_MAX
+
+    aT1_x = acc1 * nTx
+    aT1_y = acc1 * nTy
+
+    R1_x = R_x + V_rel_x * tau + 0.5 * aT1_x * tau**2
+    R1_y = R_y + V_rel_y * tau + 0.5 * aT1_y * tau**2
+
+    V1_x = V_rel_x + aT1_x * tau
+    V1_y = V_rel_y + aT1_y * tau
+
+    R1 = math.sqrt(R1_x**2 + R1_y**2) + EPS_R
+
+    sigma_dot_1 = (R1_x * V1_y - R1_y * V1_x) / (R1**2)
+
+    score1 = R1 + K_SIGMA * math.fabs(sigma_dot_1)
+
+    # ============================================================
+    # Candidate 2: acc = -ACC_MAX
+    # ============================================================
+
+    acc2 = -ACC_MAX
+
+    aT2_x = acc2 * nTx
+    aT2_y = acc2 * nTy
+
+    R2_x = R_x + V_rel_x * tau + 0.5 * aT2_x * tau**2
+    R2_y = R_y + V_rel_y * tau + 0.5 * aT2_y * tau**2
+
+    V2_x = V_rel_x + aT2_x * tau
+    V2_y = V_rel_y + aT2_y * tau
+
+    R2 = math.sqrt(R2_x**2 + R2_y**2) + EPS_R
+
+    sigma_dot_2 = (R2_x * V2_y - R2_y * V2_x) / (R2**2)
+
+    score2 = R2 + K_SIGMA * math.fabs(sigma_dot_2)
+
+    # ============================================================
+    # Choose best maneuver
+    # ============================================================
+
+    if score1 >= score2:
+        best_sign = 1.0
+        second_sign = -1.0
+        best_score = score1
+        second_score = score2
+    else:
+        best_sign = -1.0
+        second_sign = 1.0
+        best_score = score2
+        second_score = score1
+
+    # ============================================================
+    # Jinking: sign changes to disturb sigma_dot estimation
+    # ============================================================
+
+    chosen_sign = target_chosen_sign.get()
+    last_switch = target_last_switch.get()
+
+    if R < R_PANIC:
+        chosen_sign = best_sign
+        last_switch = t_sim
+    else:
+        if (t_sim - last_switch) >= DWELL_TIME:
+
+            if second_score > 0.88 * best_score:
+                chosen_sign = second_sign
+            else:
+                chosen_sign = best_sign
+
+            last_switch = t_sim
+
+    # If sigma_dot is almost zero, PNG is doing well.
+    # Change sign to break the collision triangle.
+    if math.fabs(sigma_dot) < 0.02 and R < R_ON and Vc > EPS_VC:
+        if (t_sim - last_switch) >= 0.5 * DWELL_TIME:
+            chosen_sign = -chosen_sign
+            last_switch = t_sim
+
+    target_chosen_sign.set(chosen_sign)
+    target_last_switch.set(last_switch)
+
+    acc = ACC_MAX * chosen_sign
 
     return acc
 
