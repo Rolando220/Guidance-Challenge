@@ -68,14 +68,14 @@ close all
 
 %% LOG DELLA GARA
 % png con bias
-name = "logging_script__20260611_152020.txt" % target uniforme
-name = "logging_script__20260611_152255.txt" % target accelerante
-name = "logging_script__20260611_153027.txt" % target intelligente png
-
-% guida ibrida png con bias + apng
-name = "logging_script__20260611_170633.txt" % target uniforme
-name = "logging_script__20260611_170726.txt" % target accelerante
-name = "logging_script__20260611_170822.txt" % target intelligente
+% name = "logging_script__20260611_152020.txt" % target uniforme
+% name = "logging_script__20260611_152255.txt" % target accelerante
+ %name = "logging_script__20260611_153027.txt" % target intelligente png
+% 
+% % guida ibrida png con bias + apng
+% name = "logging_script__20260611_170633.txt" % target uniforme
+ %name = "logging_script__20260611_170726.txt" % target accelerante
+ name = "logging_script__20260611_170822.txt" % target intelligente
 
 
 %%        
