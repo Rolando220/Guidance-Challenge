@@ -64,7 +64,20 @@ close all
 % name = "logging_script__20260604_140733.txt" % hybrid_drive target intelligente triangolo miss distance 0.0270 total pen 34.3590
 % name = "logging_script__20260604_141112.txt" % hybrid drive target intelligente triangolo miss distance 0.0490 total pen 36.0220
 % name = "logging_script__20260604_142049.txt" % hybrid drive target intelligente triangolo miss distance 0.0040 total pen 29.9530
-name = "logging_script__20260611_153027.txt"
+
+
+%% LOG DELLA GARA
+% png con bias
+% name = "logging_script__20260611_152020.txt" % target uniforme
+% name = "logging_script__20260611_152255.txt" % target accelerante
+ %name = "logging_script__20260611_153027.txt" % target intelligente png
+% 
+% % guida ibrida png con bias + apng
+% name = "logging_script__20260611_170633.txt" % target uniforme
+ %name = "logging_script__20260611_170726.txt" % target accelerante
+ name = "logging_script__20260611_170822.txt" % target intelligente
+
+
 %%        
 %%  *****************************************************        
 %%  *                                                   *
